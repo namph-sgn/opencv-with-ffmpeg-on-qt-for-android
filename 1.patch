@@ -1,0 +1,56 @@
+Index: modules/videoio/include/opencv2/videoio.hpp
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- modules/videoio/include/opencv2/videoio.hpp	(revision 4c71dbf0af70e8728b8a791695b083540af72887)
++++ modules/videoio/include/opencv2/videoio.hpp	(revision e3ff3e473b906556973c7b3ad39dc077a7440642)
+@@ -174,6 +174,7 @@
+        CAP_PROP_CHANNEL       =43, //!< Video input or Channel Number (only for those cameras that support)
+        CAP_PROP_AUTO_WB       =44, //!< enable/ disable auto white-balance
+        CAP_PROP_WB_TEMPERATURE=45, //!< white-balance color temperature
++       CAP_PROP_ORIENTATION_META=48, //!< (read-only) Frame rotation defined by stream meta (applicable for FFmpeg back-end only)
+ #ifndef CV_DOXYGEN
+        CV__CAP_PROP_LATEST
+ #endif
+Index: modules/videoio/src/cap_ffmpeg_impl.hpp
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- modules/videoio/src/cap_ffmpeg_impl.hpp	(revision 4c71dbf0af70e8728b8a791695b083540af72887)
++++ modules/videoio/src/cap_ffmpeg_impl.hpp	(revision e3ff3e473b906556973c7b3ad39dc077a7440642)
+@@ -500,6 +500,7 @@
+     double  r2d(AVRational r) const;
+     int64_t dts_to_frame_number(int64_t dts);
+     double  dts_to_sec(int64_t dts) const;
++    int     get_rotation_angle() const;
+ 
+     AVFormatContext * ic;
+     AVCodec         * avcodec;
+@@ -1217,6 +1218,8 @@
+         return _opencv_ffmpeg_get_sample_aspect_ratio(ic->streams[video_stream]).num;
+     case CAP_PROP_SAR_DEN:
+         return _opencv_ffmpeg_get_sample_aspect_ratio(ic->streams[video_stream]).den;
++    case CAP_PROP_ORIENTATION_META:
++        return static_cast<double>(get_rotation_angle());
+     default:
+         break;
+     }
+@@ -1295,6 +1298,16 @@
+         r2d(ic->streams[video_stream]->time_base);
+ }
+ 
++int CvCapture_FFMPEG::get_rotation_angle() const
++{
++    int angle = 0;
++    AVDictionaryEntry *rotate_tag = av_dict_get(video_st->metadata, "rotate", NULL, 0);
++    if (rotate_tag != NULL)
++        angle = atoi(rotate_tag->value);
++
++    return angle;
++}
++
+ void CvCapture_FFMPEG::seek(int64_t _frame_number)
+ {
+     _frame_number = std::min(_frame_number, get_total_frames());

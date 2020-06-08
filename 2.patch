@@ -1,0 +1,166 @@
+Index: modules/videoio/include/opencv2/videoio.hpp
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- modules/videoio/include/opencv2/videoio.hpp	(revision e3ff3e473b906556973c7b3ad39dc077a7440642)
++++ modules/videoio/include/opencv2/videoio.hpp	(revision 8032893e5e3f891d854c0a8a543639aae169d4a0)
+@@ -175,6 +175,7 @@
+        CAP_PROP_AUTO_WB       =44, //!< enable/ disable auto white-balance
+        CAP_PROP_WB_TEMPERATURE=45, //!< white-balance color temperature
+        CAP_PROP_ORIENTATION_META=48, //!< (read-only) Frame rotation defined by stream meta (applicable for FFmpeg back-end only)
++       CAP_PROP_ORIENTATION_AUTO=49, //!< if true - rotates output frames of CvCapture considering video file's metadata  (applicable for FFmpeg back-end only) (https://github.com/opencv/opencv/issues/15499)
+ #ifndef CV_DOXYGEN
+        CV__CAP_PROP_LATEST
+ #endif
+Index: modules/videoio/src/cap_ffmpeg.cpp
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- modules/videoio/src/cap_ffmpeg.cpp	(revision e3ff3e473b906556973c7b3ad39dc077a7440642)
++++ modules/videoio/src/cap_ffmpeg.cpp	(revision 8032893e5e3f891d854c0a8a543639aae169d4a0)
+@@ -90,7 +90,10 @@
+         if (!ffmpegCapture ||
+            !icvRetrieveFrame_FFMPEG_p(ffmpegCapture, &data, &step, &width, &height, &cn))
+             return false;
+-        cv::Mat(height, width, CV_MAKETYPE(CV_8U, cn), data, step).copyTo(frame);
++
++        cv::Mat mat = cv::Mat(height, width, CV_MAKETYPE(CV_8U, cn), data, step);
++        rotateFrame(mat);
++        mat.copyTo(frame);
+         return true;
+     }
+     virtual bool open( const cv::String& filename )
+@@ -113,6 +116,29 @@
+ 
+ protected:
+     CvCapture_FFMPEG* ffmpegCapture;
++private:
++    void rotateFrame(Mat &mat) const {
++        if(!ffmpegCapture) {
++            return;
++        }
++        int angle = ffmpegCapture->rotation_angle;
++        if(!ffmpegCapture->rotation_auto || (angle % 360) == 0) {
++            return;
++        }
++
++        RotateFlags flag;
++        if(angle == 90 || angle == -270) { // Rotate clockwise 90 degrees
++            flag = ROTATE_90_CLOCKWISE;
++        } else if(angle == 270 || angle == -90) { // Rotate clockwise 270 degrees
++            flag = ROTATE_90_COUNTERCLOCKWISE;
++        } else if(angle == 180 || angle == -180) { // Rotate clockwise 180 degrees
++            flag = ROTATE_180;
++        } else { // Unsupported rotation
++            return;
++        }
++
++        cv::rotate(mat, mat, flag);
++    }
+ };
+ 
+ } // namespace
+Index: modules/videoio/src/cap_ffmpeg_impl.hpp
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- modules/videoio/src/cap_ffmpeg_impl.hpp	(revision e3ff3e473b906556973c7b3ad39dc077a7440642)
++++ modules/videoio/src/cap_ffmpeg_impl.hpp	(revision 8032893e5e3f891d854c0a8a543639aae169d4a0)
+@@ -74,6 +74,7 @@
+ #endif
+ 
+ #include "ffmpeg_codecs.hpp"
++#include <libavutil/display.h>
+ 
+ #include <libavutil/mathematics.h>
+ 
+@@ -500,7 +501,7 @@
+     double  r2d(AVRational r) const;
+     int64_t dts_to_frame_number(int64_t dts);
+     double  dts_to_sec(int64_t dts) const;
+-    int     get_rotation_angle() const;
++    void    get_rotation_angle();
+ 
+     AVFormatContext * ic;
+     AVCodec         * avcodec;
+@@ -516,6 +517,8 @@
+ 
+     int64_t frame_number, first_frame_number;
+ 
++    bool   rotation_auto;
++    int    rotation_angle; // valid 0, 90, 180, 270
+     double eps_zero;
+ /*
+    'filename' contains the filename of the videosource,
+@@ -553,6 +556,9 @@
+     frame_number = 0;
+     eps_zero = 0.000025;
+ 
++    rotation_auto = true;
++    rotation_angle = 0;
++
+ #if LIBAVFORMAT_BUILD >= CALC_FFMPEG_VERSION(52, 111, 0)
+     dict = NULL;
+ #endif
+@@ -979,6 +985,7 @@
+             frame.cn = 3;
+             frame.step = 0;
+             frame.data = NULL;
++            get_rotation_angle();
+             break;
+         }
+     }
+@@ -1188,9 +1195,9 @@
+     case CAP_PROP_FRAME_COUNT:
+         return (double)get_total_frames();
+     case CAP_PROP_FRAME_WIDTH:
+-        return (double)frame.width;
++        return (double)((rotation_auto && rotation_angle%360) ? frame.height : frame.width);
+     case CAP_PROP_FRAME_HEIGHT:
+-        return (double)frame.height;
++        return (double)((rotation_auto && rotation_angle%360) ? frame.width : frame.height);
+     case CAP_PROP_FPS:
+         return get_fps();
+     case CAP_PROP_FOURCC:
+@@ -1219,7 +1226,9 @@
+     case CAP_PROP_SAR_DEN:
+         return _opencv_ffmpeg_get_sample_aspect_ratio(ic->streams[video_stream]).den;
+     case CAP_PROP_ORIENTATION_META:
+-        return static_cast<double>(get_rotation_angle());
++        return static_cast<double>(rotation_angle);
++    case CAP_PROP_ORIENTATION_AUTO:
++        return static_cast<double>(rotation_auto);
+     default:
+         break;
+     }
+@@ -1298,14 +1307,12 @@
+         r2d(ic->streams[video_stream]->time_base);
+ }
+ 
+-int CvCapture_FFMPEG::get_rotation_angle() const
++void CvCapture_FFMPEG::get_rotation_angle()
+ {
+-    int angle = 0;
++    rotation_angle = 0;
+     AVDictionaryEntry *rotate_tag = av_dict_get(video_st->metadata, "rotate", NULL, 0);
+     if (rotate_tag != NULL)
+-        angle = atoi(rotate_tag->value);
+-
+-    return angle;
++        rotation_angle = atoi(rotate_tag->value);
+ }
+ 
+ void CvCapture_FFMPEG::seek(int64_t _frame_number)
+@@ -1398,6 +1405,9 @@
+ 
+             picture_pts=(int64_t)value;
+         }
++        break;
++    case CAP_PROP_ORIENTATION_AUTO:
++        rotation_auto = static_cast<bool>(value);
+         break;
+     default:
+         return false;

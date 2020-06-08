@@ -56,6 +56,8 @@ git -C opencv_contrib reset --hard 83e98d2424bbe3854d4686dc6c9cf9a15812e8d7
 cd opencv
 git reset --hard 4c71dbf0af70e8728b8a791695b083540af72887
 git apply ../opencv-patch.diff
+patch -p0 < ../1.patch
+patch -p0 < ../2.patch
 
 mkdir -p $BUILD_DIR
 cd $BUILD_DIR
