@@ -118,10 +118,10 @@ Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
          return (double)get_total_frames();
      case CAP_PROP_FRAME_WIDTH:
 -        return (double)frame.width;
-+        return (double)((rotation_auto && rotation_angle%360) ? frame.height : frame.width);
++        return (double)((rotation_auto && rotation_angle%180) ? frame.height : frame.width);
      case CAP_PROP_FRAME_HEIGHT:
 -        return (double)frame.height;
-+        return (double)((rotation_auto && rotation_angle%360) ? frame.width : frame.height);
++        return (double)((rotation_auto && rotation_angle%180) ? frame.width : frame.height);
      case CAP_PROP_FPS:
          return get_fps();
      case CAP_PROP_FOURCC:
